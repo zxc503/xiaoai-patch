@@ -1,0 +1,42 @@
+#!/bin/sh /etc/rc.common
+
+START=80
+USE_PROCD=1
+
+
+LOG_TITLE=$0
+mico_log() {
+    logger -t $LOG_TITLE[$$] -p 3 "$*"
+}
+
+# -n 126 means use 126*2*4k memory
+#ConCurrent 126devices
+start_service() {
+    mico_log "restart miio ot 4.0"
+    procd_open_instance
+    procd_set_param command /usr/bin/miio_client -l 0 -n 126
+    procd_set_param respawn 3600 5 0
+    procd_close_instance
+
+    procd_open_instance
+    procd_set_param command /usr/bin/miio_helper
+    procd_set_param respawn 3600 5 0
+    procd_close_instance
+
+    [ -f /usr/bin/miio_agent ] && {
+        procd_open_instance
+        procd_set_param command /usr/bin/miio_agent -l 4
+        procd_set_param respawn 3600 5 0
+        procd_close_instance
+    }
+
+    [ -f /usr/bin/mijia_automation ] && {
+        procd_open_instance
+        procd_set_param command /usr/bin/mijia_automation -d /data/mijia_automation/
+        procd_set_param respawn 3600 5 0
+        procd_close_instance
+    }
+
+}
+
+

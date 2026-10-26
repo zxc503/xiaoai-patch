@@ -1,0 +1,243 @@
+#!/bin/sh
+
+
+TIMEOUT=5
+MPATH="mediaplayer"
+METHOD="player_play_operation"
+
+mico_log() {
+    logger -t mphelper[$$] -p 3 "$*"  &> /dev/null &
+}
+
+play_resume() {
+    ubus -t $TIMEOUT call $MPATH $METHOD  {\"action\":\"play\",\"media\":\"common\"}
+}
+
+play_pause() {
+    ubus -t $TIMEOUT call $MPATH $METHOD {\"action\":\"pause\",\"media\":\"common\"}
+}
+
+#1 break
+#0 continue
+voip_call()
+{
+    local voip_action=$1
+    [ ! -f /usr/bin/voip_helper ] && {
+        mico_log "voip not exist"
+        return 0;
+    }
+
+    local voip_status=$(/usr/bin/voip_helper -e $voip_action)
+    [ x"idle" == x"$voip_status" ] && {
+        mico_log "voip status $voip_status"
+        return 0;
+    }
+    
+    return 1;
+}
+
+play_toggle() {
+    voip_call play
+    [ $? != 0 ] && return;
+
+    mico_log "voip idle"
+    ubus -t 1 call qplayer play {\"play\":\"/usr/share/common_sound/key_prev_next.opus\"}
+    ubus -t $TIMEOUT call $MPATH $METHOD {\"action\":\"toggle\",\"media\":\"common\"}
+}
+
+play_next() {
+    voip_call query
+    [ $? != 0 ] && return;
+
+    mico_log "voip idle"
+    ubus -t 1 call qplayer play {\"play\":\"/usr/share/common_sound/key_prev_next.opus\"}
+    ubus -t $TIMEOUT call $MPATH $METHOD {\"action\":\"next\",\"media\":\"common\"}
+}
+
+play_previous() {
+    voip_call query
+    [ $? != 0 ] && return;
+
+    mico_log "voip idle"
+    ubus -t 1 call qplayer play {\"play\":\"/usr/share/common_sound/key_prev_next.opus\"}
+    ubus -t $TIMEOUT call $MPATH $METHOD {\"action\":\"prev\",\"media\":\"common\"}
+}
+
+iot_play_next() {
+    voip_call query
+    [ $? != 0 ] && return;
+
+    mico_log "voip idle"
+    ubus -t $TIMEOUT call $MPATH $METHOD {\"action\":\"next\",\"media\":\"common\"}
+}
+
+iot_play_previous() {
+    voip_call query
+    [ $? != 0 ] && return;
+
+    mico_log "voip idle"
+    ubus -t $TIMEOUT call $MPATH $METHOD {\"action\":\"prev\",\"media\":\"common\"}
+}
+
+play_channel() {
+    voip_call query
+    [ $? != 0 ] && return;
+
+    mico_log "voip idle"
+    ubus -t 1 call qplayer play {\"play\":\"/usr/share/common_sound/key_prev_next.opus\"}
+    ubus -t $TIMEOUT call $MPATH $METHOD {\"action\":\"channel\",\"media\":\"common\"}
+}
+
+play_mute() {
+    ubus -t 1 call qplayer play {\"play\":\"/usr/share/common_sound/key_prev_next.opus\"}
+}
+
+play_tone()
+{
+    ubus -t 1 call mediaplayer player_play_url {\"url\":\""$1"\",\"type\":1}
+}
+
+mute_stat()
+{
+    source /usr/share/libubox/jshn.sh
+    play_status=$(ubus -t $TIMEOUT call mediaplayer player_get_play_status)
+    [ x"$play_status" == x"" ] && exit 1
+    json_init 
+    json_load "$play_status"
+    json_get_var info_string info
+    json_cleanup
+
+    [ x"$info_string" == x"" ] && exit 1
+    json_init
+    json_load "$info_string"
+    json_get_var status_string status
+    json_cleanup
+    echo $status_string
+    #if [ x"$status_string" == x"1" ]; then
+    #    echo "play"
+    #else
+    #    echo "mute"
+    #fi
+}
+
+volume_get()
+{
+    source /usr/share/libubox/jshn.sh
+    play_status=$(ubus -t $TIMEOUT call mediaplayer player_get_context)
+    [ x"$play_status" == x"" ] && exit 1
+    json_init 
+    json_load "$play_status"
+    json_get_var info_string info
+    json_cleanup
+
+    [ x"$info_string" == x"" ] && exit 1
+    json_init
+    json_load "$info_string"
+    json_get_var volume_string volume\
+    json_cleanup
+    echo "$volume_string"
+}
+
+VOLUME_STEP=4
+VOLUME_MIN=0
+VOLUME_MAX=100
+volume_step_get()
+{
+    ROM_TYPE=$(micocfg_model)
+    case $ROM_TYPE in
+    LX01|lx01|LX05A|lx05a|LX05|lx05|L07A|l07a)
+        VOLUME_STEP=8;
+    ;;
+    esac
+}
+
+volume_set()
+{
+    local volume="$1"
+    volume_step_get
+    ubus -t $TIMEOUT call $MPATH player_set_volume {\"volume\":"$1"}
+}
+
+continuous_volume_set()
+{
+    local volume="$1"
+    volume_step_get
+    ubus -t $TIMEOUT call $MPATH player_set_continuous_volume {\"volume\":"$1"}
+}
+
+volume_up()
+{
+
+    local volume=$(volume_get)
+    volume_step_get
+    [ $(echo "$volume" | grep '^[[:digit:]]*$') ] && {
+        local new_volume=$((volume+VOLUME_STEP))
+        volume_set "$new_volume"
+    }
+}
+
+volume_down()
+{
+    local volume=$(volume_get)
+    [ $(echo "$volume" | grep '^[[:digit:]]*$') ] && {
+        local new_volume=$((volume-VOLUME_STEP))
+        volume_set "$new_volume"
+    }
+}
+
+
+case "$1" in
+    play)
+	play_resume
+	;;
+    pause)
+	play_pause
+	;;
+    toggle)
+	play_toggle
+	;;
+    next)
+	play_next
+	;;
+    prev)
+	play_previous
+	;;
+	iot_next)
+	iot_play_next
+	;;
+    iot_prev)
+	iot_play_previous
+	;;
+    ch)
+	play_channel
+	;;
+    mute)
+	play_pause
+	;;
+    mu)
+	play_mute
+	;;
+    mute_stat)
+        mute_stat
+        ;;
+    volume_get)
+	volume_get
+	;;
+    volume_set)
+	volume_set "$2"
+	;;
+	continuous_volume_set)
+	continuous_volume_set "$2"
+	;;
+    volume_up)
+	volume_up
+	;;
+    volume_down)
+	volume_down
+	;;
+    tone)
+        play_tone "$2"
+        ;;
+esac
+
+

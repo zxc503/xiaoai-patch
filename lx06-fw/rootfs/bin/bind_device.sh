@@ -1,0 +1,29 @@
+#!/bin/sh
+
+export LED_PARENT=$0
+LOG_TITLE=$0
+mico_log() {
+    logger -t $LOG_TITLE[$$] -p 3 "$*"
+}
+
+set_bind_and_restart_service() {
+    sleep 20
+    mico_log "set bind by messageagent"
+    ubus call mibt ble '{"action":"hidden"}'
+    [ ! -f "/data/status/config_done" ] && {
+        mico_log "set bind by messageagent　create config_done"
+        mkdir -p /data/status
+        touch /data/status/config_done
+        sync
+        /bin/shut_led 6
+#do not notify
+    }
+}
+
+case $1 in
+*)
+[ -f /tmp/unbind_in_process ] && return
+set_bind_and_restart_service
+matool_download_miot_token sync
+;;
+esac

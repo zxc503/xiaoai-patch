@@ -1,0 +1,41 @@
+#!/bin/sh /etc/rc.common
+
+START=42
+
+USE_PROCD=1
+export LED_PARENT=led
+
+
+nightmode_config_init()
+{
+    [ -f /data/etc/nightmode.cfg ] && return;
+    [ -f /data/etc/nightmode ] && {
+	    cat /data/etc/nightmode |awk -F "[ \']" '{if($1~/option/) printf $2"=\""$4"\";\n"}' > /data/etc/nightmode.cfg
+        fsync /data/etc/nightmode.cfg
+        rm -f /data/etc/nightmode
+        return;
+    }
+
+    mkdir -p /data/etc
+    touch /data/etc/nightmode.cfg
+    echo  "total=\"night\";" > /data/etc/nightmode.cfg
+    echo  "light=\"night\";" >> /data/etc/nightmode.cfg
+    echo  "volume=\"night\";" >> /data/etc/nightmode.cfg
+    echo  "start=\"22:00\";" >> /data/etc/nightmode.cfg
+    echo  "stop=\"06:00\";" >> /data/etc/nightmode.cfg
+    fsync /data/etc/nightmode.cfg
+}
+
+start_service() {
+    nightmode_config_init
+    procd_open_instance
+    procd_set_param command /bin/ledserver
+    procd_set_param nice
+    procd_append_param nice -10
+    procd_set_param respawn 3600 5 0
+    procd_close_instance
+}
+
+service_started() {
+    /bin/show_led 4
+}
