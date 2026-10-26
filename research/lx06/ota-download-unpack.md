@@ -153,6 +153,8 @@ ls -lh \
   /workspace/lx06-fw/rootfs/usr/lib/libiotdcm_mdplay.so
 ```
 
+这三份库的多音箱时钟对齐算法（对时、时间戳、变速）见 [mdplay-multiroom-sync.md](./mdplay-multiroom-sync.md)。
+
 `mico_version` 中应有：
 
 ```text
