@@ -1,0 +1,17 @@
+#!/bin/sh /etc/rc.common
+
+USE_PROCD=1
+
+MESH_PROC=/usr/bin/mibt_mesh
+
+start_service() {
+
+  BOARD_TYPE=`fw_env -g board_id`  1>/dev/null 2>/dev/null
+  if [[ x"$BOARD_TYPE" = x"3" ]] || [[ x"$BOARD_TYPE" = x"6" ]] || [[ x"$BOARD_TYPE" = x"9" ]]; then
+      MESH_PROC=/usr/bin/mibt_mesh_rtl
+  fi
+  procd_open_instance
+  procd_set_param command "$MESH_PROC"
+  procd_set_param respawn 3600 5 0
+  procd_close_instance
+}

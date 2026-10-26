@@ -1,0 +1,440 @@
+#!/bin/sh
+
+# mico_voip_client_helper
+# author zhangdawei
+# mail alphacn@gmail.com
+#
+# root@mico:/# ubus -v list voip 
+# 'voip' @e9743849
+#         "voip_signal_op":{"op":"Integer","uid":"String"}
+#         "action":{"vender":"String","event":"String","contact_id":"String","number":"String","name":"String"}
+#         "cmcc_register":{}
+#         "cmcc_unregister":{}
+
+TIMEOUT=5
+MPATH="voip"
+
+my_log() {
+    logger -t voip_helper[$$] -p 3 "$*"
+    #echo $*
+}
+
+result_parse()
+{
+    [ x"$result" == x"" ] && {
+        status_string=idle
+        return;
+    }
+    json_init 
+    json_load "$result"
+    json_get_var code_string code
+    json_get_var status_string status
+    json_cleanup
+}
+
+usage()
+{
+    echo "Usage: %s [-e <event>] [-v vendor] [-n phone_number] [-i contract_id] [-h]"
+    echo ""
+    echo "    -e      event: query ringback ring_stop wakeup_start wakeup_end play mute unmute callin callout pickup_local pickup_peer hangup_local hangup_peer uploadlog"
+    echo "    -v      vendor: agora or cmcc-ims"
+    echo "    -n      phone_number"
+    echo "    -m      phone_name"
+    echo "    -i      contract_id"
+    echo "    -s      callout string"
+    echo "    -h      print usage"
+    echo ""
+}
+
+set -- `getopt e:v:n:m:i:s:t: "$@"`
+
+my_log "param = $@"
+
+while [ -n "$1" ]
+do
+    case "$1" in 
+    -e)
+        v_event=$2
+        shift
+        ;;
+    -v) 
+        v_vender=$2
+        shift
+        ;;
+    -n) 
+        v_number=$2
+        shift
+        ;;
+    -m) 
+        v_name=$2
+        shift
+        ;;
+    -i) 
+        v_id=$2
+        shift
+        ;;
+    -t) 
+        v_tts=${@:2}
+        v_tts=${v_tts/--/}
+        break;
+        shift
+        ;;
+    -s) 
+        #v_string=$2
+        v_string=${@:2}
+        v_string=${v_string/--/}
+        break; #for getopt bug ,must exit
+        shift
+        
+        ;;
+    --)
+        shift
+        break
+        ;;
+    *) 
+        echo "err $1 $2"
+        usage
+        exit 1
+        ;;
+    esac
+    shift
+done
+
+my_log "event:$v_event vender:$v_vender number:$v_number name:$v_name id:$v_id"
+
+[ -z $v_event ] && {
+    usage
+    exit 1
+}
+
+play_text()
+{
+    local _result=$(ubus call mibrain text_to_speech "{\"text\":\"$1\",\"save\":1}")
+    [ x"$_result" == x"" ] && exit 1
+    json_init 
+    json_load "$_result"
+    json_get_var _info info  
+    json_cleanup
+    echo $_info 
+    json_init 
+    json_load "$_info"
+    json_get_var _path path  
+    json_cleanup
+    my_log "play text tts created $_path"
+    echo $_path
+    [ x"$_path" == x"" ] && {
+        miplayer -f /usr/share/sound/mibrain_network_unreachable.opus
+        return 1
+    }
+    miplayer -f $_path 
+    rm $_path
+    return 0
+}
+
+callout_text_prepare() 
+{ 
+    miplayer -f /usr/share/sound/ims_callout_prefix.opus >/dev/null 2>/dev/null
+    #mphelper tone /usr/share/sound/ims_callout_prefix.opus >/dev/null 2>/dev/null  
+    #ubus call qplayer play "{\"play\":\"/usr/share/sound/ims_callout_prefix.opus\",\"light\":3}"
+    #touch $1 
+    #callout_text_post $2
+}
+
+callout_text()
+{
+    local text_in=$1
+    local text_query=${text_in#*正在呼叫}
+    local text_flagfile="/tmp/callout_text_$(cat /proc/sys/kernel/random/uuid)"
+    [ x"$text_in" != x"$text_query" ] && {
+        callout_text_prepare &
+    }
+
+    local _result=$(ubus call mibrain text_to_speech "{\"text\":\"$text_query\",\"save\":1}")
+    [ x"$_result" == x"" ] && exit 1
+    json_init 
+    json_load "$_result"
+    json_get_var _info info  
+    json_cleanup
+    echo $_info 
+    json_init 
+    json_load "$_info"
+    json_get_var _path path  
+    json_cleanup
+    my_log "play text tts created $_path"
+    echo $_path
+
+    rm $text_flagfile
+    [ x"$_path" == x"" ] && {
+        miplayer -f /usr/share/sound/mibrain_network_unreachable.opus
+
+        return 1
+    }
+    miplayer -f $_path 
+    rm $_path
+    return 0
+}
+
+callout_text_3_0()
+{
+    local text_in=$1
+    local text_query=${text_in#*正在呼叫}
+    local text_flagfile="/tmp/callout_text_$(cat /proc/sys/kernel/random/uuid)"
+    local expect_time=$(($(date +%s)+2));
+    #echo $start_time
+    #[ x"$text_in" != x"$text_query" ] && {
+        callout_text_prepare &
+    #}
+
+    local _result=$(ubus call mibrain text_to_speech "{\"text\":\"$text_query\",\"save\":1}")
+    [ x"$_result" == x"" ] && exit 1
+    json_init 
+    json_load "$_result"
+    json_get_var _info info  
+    json_cleanup
+    echo $_info 
+    json_init 
+    json_load "$_info"
+    json_get_var _path path  
+    json_cleanup
+    my_log "play text tts created $_path"
+    echo $_path
+
+    #local expect_time=$(($(date +%s)+4));sleep 2
+    local end_time=$(date +%s)
+    [ $end_time -lt $expect_time ] && sleep $(($expect_time-$end_time))
+    rm $text_flagfile
+    [ x"$_path" == x"" ] && {
+        miplayer -f /usr/share/sound/mibrain_network_unreachable.opus
+
+        return 1
+    }
+    miplayer -f $_path 
+    #rm $_path
+    return 0
+}
+
+voip_query()
+{
+    result=$(ubus -t $TIMEOUT call voip action "{\"event\":\"query\"}" 2>/dev/null)
+    [ x"$result" == x"" ] && exit 1
+    json_init 
+    json_load "$result"
+    json_get_var status_string status_string  
+    json_cleanup
+    echo $status_string
+}
+
+
+NEED_RING=/tmp/voip_need_ring
+
+
+ring_stop()
+{
+    rm -f $NEED_RING
+    killall -9 miplayer
+}
+
+ring_continue_check()
+{
+    [ ! -f $NEED_RING ] && {
+        my_log "no more continue." ;
+        ring_stop
+        exit;
+    }
+}
+
+
+ring_mp3()
+{
+    ring_pid=$(ps w | grep miplayer |grep "$1" | awk '{printf $1" "}')
+    [ ! -z $ring_pid ] && kill $ring_pid
+    miplayer -l -f $1 1>/dev/null 2>/dev/null
+}
+
+ring_tts()
+{
+    #for tts delay.
+    ring_continue_check
+    miplayer -l -f "/usr/share/common_sound/voip_ringing.opus" & 1>/dev/null 2>/dev/null 
+
+    local _result=$(ubus call mibrain text_to_speech "{\"text\":\"$1\",\"save\":1}")
+    [ x"$_result" == x"" ] && exit 1
+    json_init 
+    json_load "$_result"
+    json_get_var _info info  
+    json_cleanup
+    echo $_info 
+    json_init 
+    json_load "$_info"
+    json_get_var _path path  
+    json_cleanup
+
+    [ x"$_path" == x"" ] && exit 1
+    sleep 1
+    killall -9 miplayer
+    ring_continue_check
+
+    while true
+    do
+        miplayer -f $_path 1>/dev/null 2>/dev/null
+        ring_continue_check
+        timeout -t 3 miplayer -f "/usr/share/common_sound/voip_ringing.opus" 1>/dev/null 2>/dev/null
+        ring_continue_check
+    done
+
+    rm $_path
+}
+
+config_time_get()
+{
+    local config_results=""
+    is_preview=$(grep micoapi_url /usr/share/mico/messaging/messaging.conf | grep preview|wc -l)
+    carrier_type=$(mikey get uid 2>/dev/null)
+    [ "$is_preview" == "1" ] && config_results=$(matool_get_common_config voip_configs_preview 2>/dev/null)
+    [ "$is_preview" != "1" ] && config_results=$(matool_get_common_config voip_configs 2>/dev/null)
+    json_init 
+    json_load "$config_results"
+    json_get_var _code code
+    json_get_var _data data  
+    json_cleanup
+    
+    json_init 
+    json_load "$_data"
+    json_get_var _normal free_seconds_normal
+    json_get_var _carrier free_seconds_carrier
+    json_cleanup
+
+    [ "$carrier_type" == "CMCC" ] && voip_config_time=$_carrier || voip_config_time=$_normal
+    echo ${voip_config_time:=18000}
+
+    my_log "prevew:$is_preview carrier_type:$carrier_type voip_config_time:$voip_config_time"
+    return 0;
+}
+
+duration_status_get()
+{
+    duration_results=$(matool_get_voip_duration_status 2>/dev/null)
+    
+    json_init 
+    json_load "$duration_results"
+    json_get_var duration_time data  
+    json_cleanup
+ 
+    echo ${duration_time:=0}
+    my_log "duration_time:$duration_time "
+    return 0;
+}
+
+source /usr/share/libubox/jshn.sh
+
+case "$v_event" in
+    query)
+        voip_status=$(voip_query)
+        #echo $code_string
+        echo $voip_status
+        exit 0
+        break;
+    ;;
+    mute|unmute|hangup_local)
+        rm -f $NEED_RING 1>/dev/null 2>/dev/null
+        voip_status=$(voip_query)
+        [ x"$voip_status" == x"idle" ] && {
+            echo $voip_status
+            exit 0
+        }
+        result=$(ubus -t $TIMEOUT call voip action "{\"vender\":\"$v_vender\",\"event\":\"hangup_local\"}")
+        [ x"$voip_status" != x"idle" ] && {
+            echo busy
+            exit 0
+        }
+        break;
+    ;;
+    play|pickup_local)
+        rm -f $NEED_RING 1>/dev/null 2>/dev/null
+        result=$(ubus -t $TIMEOUT call voip action "{\"vender\":\"$v_vender\",\"event\":\"pickup_local\"}")
+        break;
+    ;;
+    callin)
+        touch $NEED_RING 1>/dev/null 2>/dev/null
+        result=$(ubus -t $TIMEOUT call voip action "{\"vender\":\"$v_vender\",\"event\":\"$v_event\",\"contact_id\":\"$v_id\",\"number\":\"$v_number\",\"name\":\"$v_name\"}")
+        break;
+    ;;
+    callout)
+        touch $NEED_RING 1>/dev/null 2>/dev/null
+        result=$(ubus -t $TIMEOUT call voip action "{\"vender\":\"$v_vender\",\"event\":\"$v_event\",\"contact_id\":\"$v_id\",\"number\":\"$v_number\",\"string\":\"$v_string\"}")
+        break;
+    ;;
+    play_text)
+        my_log "play text begin"
+        play_text "$v_tts"
+        my_log "play text end"
+        exit 0
+        break;
+    ;;
+    callout_text)
+        my_log "callout text begin"
+        #callout_text "$v_tts"
+        callout_text_3_0 "$v_tts"
+        my_log "callout text end"
+        exit 0
+        break;
+    ;;
+    ring)
+
+        ring_mp3 "/usr/share/common_sound/voip_ringing.opus"
+        exit 0
+    ;;
+    ringback)
+
+        ring_mp3 "/usr/share/common_sound/voip_ringback.opus"
+        exit 0
+    ;;
+    ring_stop)
+        ring_stop
+        break;
+    ;;
+    ring_tts)
+        #touch $NEED_RING 1>/dev/null 2>/dev/null
+        ring_tts "$v_tts"
+        exit 0
+    ;;
+    free_time)
+        config_time_get
+        exit 0;
+    ;;
+    duration_continue)
+        config_time_get 1>/dev/null 2>/dev/null
+        duration_status_get 1>/dev/null 2>/dev/null
+        [ $duration_time -le $voip_config_time ] && echo "continue"||echo "stop"
+        exit 0;
+    ;;
+    mimc_token)
+        TOKEN_FILE="/data/voip/mimc_token"
+        FLAG_FILE="/tmp/mico-voip/voip_token_flag"
+        mkdir -p "/data/voip/" 1>/dev/null 2>/dev/null
+        mkdir -p "/tmp/mico-voip/" 1>/dev/null 2>/dev/null
+        [ -f $TOKEN_FILE -a ! -f $FLAG_FILE ] && {
+            cat $TOKEN_FILE
+            touch $FLAG_FILE
+            return; 
+        }
+
+        /usr/bin/matool_get_mimc_token > $TOKEN_FILE
+        cat $TOKEN_FILE
+        touch $FLAG_FILE
+        exit 0;
+    ;;
+    *)
+        result=$(ubus -t $TIMEOUT call voip action "{\"vender\":\"$v_vender\",\"event\":\"$v_event\"}")
+        break;
+esac
+
+#echo $result
+result_parse
+
+#echo $code_string
+echo $status_string
+[ "$code_string" != "0" ] && exit 255 
+exit 0
+
+
